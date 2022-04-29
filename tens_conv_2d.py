@@ -1,6 +1,5 @@
 from torch import nn
 
-
 def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
     '''
     Replaces a given convolutional layer with tensor decomposition.
@@ -27,7 +26,6 @@ def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
 
     device : torch.device
     '''
-
     block = getattr(model, layer)[1]
     old = getattr(block, conv_layer)
     new = tn(old, **tn_args)
@@ -48,7 +46,6 @@ class Tens_Conv_2D_Base(nn.Module):
             rank of tensor decomposition.
 
     '''
-
     def __init__(self, orig_layer, rank):
         super().__init__()
         self.rank = rank
@@ -58,7 +55,6 @@ class Tens_Conv_2D_Base(nn.Module):
         self.padding = orig_layer.padding
         self.stride = orig_layer.stride
         self.bias = orig_layer.bias
-
 
     def size(self):
         '''
@@ -70,10 +66,8 @@ class Tens_Conv_2D_Base(nn.Module):
             self.out_channels,
         )
 
-
     def forward(self, x):
         raise NotImplementedError
-
 
     def get_factors(self):
         '''
@@ -85,7 +79,6 @@ class Tens_Conv_2D_Base(nn.Module):
 class CPD_Conv_2D(Tens_Conv_2D_Base):
     def __init__(self, orig_layer, rank):
         super().__init__(orig_layer, rank)
-
         self.layers = nn.Sequential(
             nn.Conv2d(
                 in_channels=self.in_channels,
@@ -134,7 +127,6 @@ class CPD_Conv_2D(Tens_Conv_2D_Base):
 class TKD_Conv_2D(Tens_Conv_2D_Base):
     def __init__(self, orig_layer, rank):
         super().__init__(orig_layer, rank)
-
         self.layers = nn.Sequential(
             nn.Conv2d(
                 in_channels=self.in_channels,
@@ -181,13 +173,11 @@ class TKD_Conv_2D(Tens_Conv_2D_Base):
 class TC_Conv_2D(Tens_Conv_2D_Base):
     def __init__(self, orig_layer, rank):
         super().__init__(orig_layer, rank)
-
         self.in_conv = nn.Conv2d(
             in_channels=self.in_channels,
             out_channels=self.rank[0] * self.rank[1],
             kernel_size=(1, 1),
             bias=False)
-
         self.mid_conv = nn.Conv3d(
             in_channels=self.rank[1],
             out_channels=self.rank[2],
@@ -195,13 +185,11 @@ class TC_Conv_2D(Tens_Conv_2D_Base):
             stride=(1, *self.stride),
             padding=(0, *self.padding),
             bias=False)
-
         self.out_conv = nn.Conv2d(
             in_channels=self.rank[2]*self.rank[0],
             out_channels=self.out_channels,
             kernel_size=(1, 1),
             bias=self.bias)
-
         self.shapes = (
             (self.rank[0], self.rank[1], self.in_channels),
             (-1, self.rank[1], self.rank[2]),
@@ -213,20 +201,16 @@ class TC_Conv_2D(Tens_Conv_2D_Base):
             None,
         )
 
-
     def forward(self, x):
         N, _, H, W = x.shape
         H_out, W_out = int(H / self.stride[0]), int(W / self.stride[1])
-
         y = self.in_conv(x)
         y = y.reshape(N, self.rank[0], self.rank[1], H, W)
         y = y.permute(0, 2, 1, 3, 4)
-
         y = self.mid_conv(y)
         y = y.permute(0, 2, 1, 3, 4)
         y = y.reshape(N, self.rank[2] * self.rank[0], H_out, W_out)
         return self.out_conv(y)
-
 
     def get_factors(self):
         return (

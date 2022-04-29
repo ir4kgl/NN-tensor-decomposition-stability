@@ -1,7 +1,6 @@
 import torch
 from torch import trace
 
-
 class SS_Regularizer_2D_Base():
     '''
     Base class for implementation of sensitivity regularizer for model
@@ -18,17 +17,14 @@ class SS_Regularizer_2D_Base():
         conv_layer : string
             name of required convolutional layer
     '''
-
     def __init__(self, layer, index, conv_layer, regcoef=1.):
         self.layer = layer
         self.index = index
         self.conv_layer = conv_layer
         self.regcoef = regcoef
 
-
     def get_layer(self, model):
         return getattr(getattr(model, self.layer)[self.index], self.conv_layer)
-
 
     def calc_penalty(self, model):
         '''
@@ -36,13 +32,11 @@ class SS_Regularizer_2D_Base():
         '''
         return self.calc_sensitivity(model).item() * self.regcoef
 
-
     def calc_sensitivity(self, model):
         layer = self.get_layer(model)
         n1, n2, n3 = layer.size()
         t1, t2, t3 = self.calc_terms(*layer.get_factors())
         return t1 * n1 + t2 * n2 + t3 * n3
-
 
     def calc_terms(self, A, B, C):
         '''
