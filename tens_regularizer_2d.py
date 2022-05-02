@@ -30,7 +30,7 @@ class SS_Regularizer_2D_Base():
         '''
         Returns penalty based on sensitivity function.
         '''
-        return self.calc_sensitivity(model).item() * self.regcoef
+        return self.regcoef * self.calc_sensitivity(model).item()
 
     def calc_sensitivity(self, model):
         layer = self.get_layer(model)
@@ -52,13 +52,7 @@ class SS_Regularizer_2D_Base():
 
 class CPD_Sensitivity_Regularizer_2D(SS_Regularizer_2D_Base):
     def calc_terms(self, A, B, C):
-        At_A = A.T @ A
-        Bt_B = B.T @ B
-        Ct_C = C.T @ C
-        t1 = trace(Bt_B * Ct_C)
-        t2 = trace(At_A * Ct_C)
-        t3 = trace(At_A * Bt_B)
-        return t1, t2, t3
+        return torch.norm(A), torch.norm(B), torch.norm(C)
 
 
 class TKD_Sensitivity_Regularizer_2D(SS_Regularizer_2D_Base):
