@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 
 def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
@@ -26,7 +27,7 @@ def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
 
     device : torch.device
     '''
-    block = getattr(model, layer)[1]
+    block = getattr(model, layer)[index]
     old = getattr(block, conv_layer)
     new = tn(old, **tn_args)
     setattr(block, conv_layer, new.to(device))
@@ -67,6 +68,22 @@ class Tens_Conv_2D_Base(nn.Module):
         )
 
     def forward(self, x):
+        raise NotImplementedError
+
+    def calc_penalty(self):
+        n1, n2, n3 = self.size()
+        t1, t2, t3 = self.calc_terms(*self.get_factors())
+        return t1 * n1 + t2 * n2 + t3 * n3
+
+    def calc_terms(self, A, B, C):
+        '''
+        Calculates auxiliary terms for sensitivity function.
+
+        Parameters
+        ----------
+        A, B, C : torch.tensor
+            factors of tensor decomposition.
+        '''
         raise NotImplementedError
 
     def get_factors(self):
@@ -112,7 +129,6 @@ class CPD_Conv_2D(Tens_Conv_2D_Base):
             None,
         )
 
-
     def forward(self, x):
         return self.layers(x)
 
@@ -122,6 +138,13 @@ class CPD_Conv_2D(Tens_Conv_2D_Base):
             self.layers[1].weight.reshape(self.shapes[1]).permute(self.permutations[1]),
             self.layers[2].weight.reshape(self.shapes[2]),
         )
+
+    def calc_terms(self, A, B, C):
+        A_norm, B_norm, C_norm = torch.norm(A, dim=0), torch.norm(B, dim=0), torch.norm(C, dim=0)
+        t1 = torch.inner(B_norm, C_norm)
+        t2 = torch.inner(A_norm, C_norm)
+        t3 = torch.inner(A_norm, B_norm)
+        return t1, t2, t3
 
 
 class TKD_Conv_2D(Tens_Conv_2D_Base):
@@ -168,6 +191,12 @@ class TKD_Conv_2D(Tens_Conv_2D_Base):
             self.layers[1].weight.reshape(self.shapes[1]).permute(self.permutations[1]),
             self.layers[2].weight.reshape(self.shapes[2]),
         )
+
+    def calc_terms(self, A, B, C):
+        t1 = torch.einsum('abc,abd,ec,ed', B, B, C, C)
+        t2 = (torch.norm(A) * torch.norm(C)) ** 2
+        t3 = torch.einsum('abc,adc,eb,ed', B, B, A, A)
+        return t1, t2, t3
 
 
 class TC_Conv_2D(Tens_Conv_2D_Base):
@@ -218,3 +247,9 @@ class TC_Conv_2D(Tens_Conv_2D_Base):
             self.mid_conv.weight.permute(self.permutations[1]).reshape(self.shapes[1]),
             self.out_conv.weight.reshape(self.shapes[2]),
         )
+
+    def calc_terms(self, A, B, C):
+        t1 = torch.einsum('abc,abd,efc,efd', B, B, C, C)
+        t2 = torch.einsum('abc,abd,efc,efd', A, A, C, C)
+        t3 = torch.einsum('abc,abd,ecf,edf', A, A, B, B)
+        return t1, t2, t3
