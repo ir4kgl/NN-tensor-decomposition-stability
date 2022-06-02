@@ -3,24 +3,24 @@ from torch import nn
 
 def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
     '''
-    Replaces a given convolutional layer with tensor decomposition.
+    Replace given convolutional layer with tensor decomposition.
 
     Parameters
     ----------
     model :
-        model with convolutional layer to replace
+        model to compress
 
     layer : string
-        model's layer with required block
+        model's layer to compress
 
     index : int
-        index of a block with required convolutional layer
+        index of a block with convolutional layer
 
     conv_layer : string
-        name of required convolutional layer
+        convolutional layer to compress
 
     tn : Tens_Conv_2D_Base subclass
-        type of required tensor decomposition layer
+        class of tensor factorized convolutional layer
 
     tn_args : dict
         tn's constructor arguments
@@ -35,8 +35,7 @@ def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
 
 class Tens_Conv_2D_Base(nn.Module):
     '''
-    Base class for implementation of 2D convolutional kernels
-    represented as tensor decomposition.
+    Base class for 2D convolutional kernel represented as tensor decomposition.
 
     Parameters
     ----------
@@ -71,6 +70,9 @@ class Tens_Conv_2D_Base(nn.Module):
         raise NotImplementedError
 
     def calc_penalty(self):
+        '''
+        Calculates sensitivity of the factorized layer.
+        '''
         n1, n2, n3 = self.size()
         t1, t2, t3 = self.calc_terms(*self.get_factors())
         return t1 * n1 + t2 * n2 + t3 * n3
@@ -140,7 +142,7 @@ class CPD_Conv_2D(Tens_Conv_2D_Base):
         )
 
     def calc_terms(self, A, B, C):
-        A_norm, B_norm, C_norm = torch.norm(A, dim=0), torch.norm(B, dim=0), torch.norm(C, dim=0)
+        A_norm, B_norm, C_norm = torch.norm(A, dim=0) ** 2, torch.norm(B, dim=0) ** 2, torch.norm(C, dim=0) ** 2
         t1 = torch.inner(B_norm, C_norm)
         t2 = torch.inner(A_norm, C_norm)
         t3 = torch.inner(A_norm, B_norm)
