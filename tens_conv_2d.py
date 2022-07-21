@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
+def replace_conv_layer_2D(model, layer, tn, tn_args, device):
     '''
     Replace given convolutional layer with tensor decomposition.
 
@@ -11,13 +11,7 @@ def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
         model to compress
 
     layer : string
-        model's layer to compress
-
-    index : int
-        index of a block with convolutional layer
-
-    conv_layer : string
-        convolutional layer to compress
+        model's convolutional layer to compress
 
     tn : Tens_Conv_2D_Base subclass
         class of tensor factorized convolutional layer
@@ -27,10 +21,11 @@ def replace_conv_layer_2D(model, layer, index, conv_layer, tn, tn_args, device):
 
     device : torch.device
     '''
-    block = getattr(model, layer)[index]
-    old = getattr(block, conv_layer)
-    new = tn(old, **tn_args)
-    setattr(block, conv_layer, new.to(device))
+    submodule_names = layer.split(sep='.')
+    last_block = reduce(getattr, submodule_names[:-1], model)
+    layer_name = submodule_names[-1]
+    new_value = tn(old, **tn_args).to(device)
+    setattr(last_block, layer_name, new_value)
 
 
 class Tens_Conv_2D_Base(nn.Module):
