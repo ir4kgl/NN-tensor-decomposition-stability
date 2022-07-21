@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from functools import reduce
 
 def replace_conv_layer_2D(model, layer, tn, tn_args, device):
     '''
@@ -24,7 +25,7 @@ def replace_conv_layer_2D(model, layer, tn, tn_args, device):
     submodule_names = layer.split(sep='.')
     last_block = reduce(getattr, submodule_names[:-1], model)
     layer_name = submodule_names[-1]
-    new_value = tn(old, **tn_args).to(device)
+    new_value = tn(getattr(last_block, layer_name), **tn_args).to(device)
     setattr(last_block, layer_name, new_value)
 
 
