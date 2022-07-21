@@ -37,12 +37,12 @@ from tens_regularizer_2d import CPD_Sensitivity_Regularizer_2D
 
 criterion = torch.nn.CrossEntropyLoss()
 reg_coef = 1e-6
-replaced_layer = model.layer4[0].conv1
+replaced_layer = 'layer1.1.conv2'
 ...
 
 for (images, classes) in dataloader:
     loss = criterion(model(images), classes)
-    loss += reg_coef * replaced_layer.calc_penalty()     # add penalty based on sensitivity function
+    loss += reg_coef * model.get_submodule(replaced_layer).calc_penalty()    # add penalty based on sensitivity function
     loss.backward()
     ...
 ``` 
