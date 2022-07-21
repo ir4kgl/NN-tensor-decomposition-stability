@@ -21,8 +21,9 @@ model = torchvision.models.resnet18()
 tn = CPD_Conv_2D
 tn_args = {'rank': 10}
 device = torch.device("cpu")
+submodule_name = 'layer1.1.conv2'
 
-replace_conv_layer_2D(model, 'layer4', 1, 'conv1', tn, tn_args, device)
+replace_conv_layer_2D(model, submodule_name, tn, tn_args, device)
 ``` 
 
 Кроме того, каждый имплементированный класс обладает методом  `calc_penalty()`, который вычисляет и возвращает значение функции чувствительности данного слоя.
