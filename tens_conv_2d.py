@@ -90,9 +90,12 @@ class Tens_Conv_2D_Base(nn.Module):
         '''
         raise NotImplementedError
 
+    def set_factors(self, factors):
+        raise NotImplementedError
+
 
 class CPD_Conv_2D(Tens_Conv_2D_Base):
-    def __init__(self, orig_layer, rank):
+    def __init__(self, orig_layer, rank, factors=None):
         super().__init__(orig_layer, rank)
         self.layers = nn.Sequential(
             nn.Conv2d(
@@ -116,33 +119,49 @@ class CPD_Conv_2D(Tens_Conv_2D_Base):
                 kernel_size=(1, 1),
                 bias=self.bias),
         )
+
         self.shapes = (
-            (self.rank, -1),
-            (self.rank, -1),
-            (-1, self.rank),
+            self.layers[0].weight.shape,
+            self.layers[1].weight.shape,
+            self.layers[2].weight.shape
         )
-        self.permutations = (
-            (1, 0),
-            (1, 0),
-            None,
-        )
+
+        if factors is not None:
+            self.set_factors(factors)
+
 
     def forward(self, x):
         return self.layers(x)
 
     def get_factors(self):
+        A = self.layers[0].weight
+        B = self.layers[1].weight
+        C = self.layers[2].weight
         return (
-            self.layers[0].weight.reshape(self.shapes[0]).permute(self.permutations[0]),
-            self.layers[1].weight.reshape(self.shapes[1]).permute(self.permutations[1]),
-            self.layers[2].weight.reshape(self.shapes[2]),
+            A.reshape((self.rank, -1)).permute((1, 0)),
+            B.reshape((self.rank, -1)).permute((1, 0)),
+            C.reshape((-1, self.rank)),
         )
 
     def calc_terms(self, A, B, C):
-        A_norm, B_norm, C_norm = torch.norm(A, dim=0) ** 2, torch.norm(B, dim=0) ** 2, torch.norm(C, dim=0) ** 2
+        A_norm = torch.norm(A, dim=0)**2
+        B_norm = torch.norm(B, dim=0)**2
+        C_norm = torch.norm(C, dim=0)**2
         t1 = torch.inner(B_norm, C_norm)
         t2 = torch.inner(A_norm, C_norm)
         t3 = torch.inner(A_norm, B_norm)
         return t1, t2, t3
+
+    def set_factors(self, factors):
+        A, B, C = factors
+        A = A.permute((1, 0)).reshape(self.shapes[0])
+        B = B.permute((1, 0)).reshape(self.shapes[1])
+        C = C.reshape(self.shapes[2])
+
+        with torch.no_grad():
+            self.layers[0].weight = nn.Parameter(A)
+            self.layers[1].weight = nn.Parameter(B)
+            self.layers[2].weight = nn.Parameter(C)
 
 
 class TKD_Conv_2D(Tens_Conv_2D_Base):
@@ -195,6 +214,8 @@ class TKD_Conv_2D(Tens_Conv_2D_Base):
         t2 = (torch.norm(A) * torch.norm(C)) ** 2
         t3 = torch.einsum('abc,adc,eb,ed', B, B, A, A)
         return t1, t2, t3
+
+    # def set_factors(self, factors):
 
 
 class TC_Conv_2D(Tens_Conv_2D_Base):
@@ -251,3 +272,5 @@ class TC_Conv_2D(Tens_Conv_2D_Base):
         t2 = torch.einsum('abc,abd,efc,efd', A, A, C, C)
         t3 = torch.einsum('abc,abd,ecf,edf', A, A, B, B)
         return t1, t2, t3
+
+    # def set_factors(self, factors):
