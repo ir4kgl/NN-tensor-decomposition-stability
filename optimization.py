@@ -98,7 +98,7 @@ class SCQP_Optimizer():
             1,
             2*d,
             d**2 - 1,
-            2 * c**2 * d,
+            -2 * c**2 * d,
             -c**2 * d**2,
         ]
 

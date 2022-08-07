@@ -39,8 +39,8 @@ def correct_CPD(K, factors, delta, n_iters=5):
     A, B, C = factors
     for _ in range(n_iters):
         A = optimization_step(K, A, B, C, delta)
-        C = optimization_step(K.transpose((2,0,1)), C, A, B, delta)
         B = optimization_step(K.transpose((1,0,2)), B, A, C, delta)
+        C = optimization_step(K.transpose((2,0,1)), C, A, B, delta)
     return A, B, C
 
 
