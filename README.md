@@ -26,7 +26,10 @@ submodule_name = 'layer1.1.conv2'
 replace_conv_layer_2D(model, submodule_name, tn, tn_args, device)
 ``` 
 
-Кроме того, каждый имплементированный класс обладает методом  `calc_penalty()`, который вычисляет и возвращает значение функции чувствительности данного слоя.
+### Регуляризатор функции чувствительности
+---
+
+Каждый имплементированный класс обладает методом  `calc_penalty()`, который вычисляет и возвращает значение функции чувствительности данного слоя.
 
 Для того, чтобы применить регуляризацию чувствительности во время обучения, достаточно к основной функции потерь (напр., `nn.CrossEntropyLoss`) прибавить соответствующий штраф.
 
@@ -46,5 +49,43 @@ for (images, classes) in dataloader:
     loss.backward()
     ...
 ``` 
+
+### Поиск устойчивого тензорного разложения
+---
+
+Альтернативный подход к повышению устойчивости сжатой модели -- поиск тензорного разложения сверточного слоя обученной модели с минимальным значением функции чувствительности.
+
+Модуль `tens_correction.py` содержит методы поиска устойчивых тензорных разложений.
+
+Для того, чтобы дообучить сжатую модель с найденным устойчивым тензорным разложением сверточного слоя, достаточно явно передать в метод `replace_conv_layer_2D` факторы тензорной сети.
+
+
+##### Пример
+
+```python
+from tens_conv_2d import replace_conv_layer_2D, CPD_Conv_2D
+from tens_correction import factorize_CPD
+
+model = torchvision.models.resnet18(weights=ResNet18_Weights)
+replaced_layer = 'layer1.1.conv2'
+RANK = 10
+
+K = model.get_submodule(replaced_layer).weight
+args = {'delta' : 10, 'n_iters' : 5}
+A, B, C = factorize_CPD(K, RANK, correct=True, correction_args=args)
+
+tn = CPD_Conv_2D
+tn_args = {'rank': RANK, 'factors' : (A, B, C)}
+device = torch.device("cpu")
+
+replace_conv_layer_2D(model, replaced_layer, tn, tn_args, device)
+
+...
+# fine-tuning the model
+...
+```
+
+
+
 
 
