@@ -181,6 +181,6 @@ class Linreg_Optimizer():
         '''
         output_shape = (B.shape[0], A.shape[0])
         B_vec = B.flatten(order='C')
-        A_new = LA.kron(np.eye(B.shape[0]), A).T
+        A_new = LA.kron(A, np.eye(B.shape[0])).T
         x_vec = self.solve(A_new, B_vec, delta)
         return x_vec.reshape(output_shape, order='C')
