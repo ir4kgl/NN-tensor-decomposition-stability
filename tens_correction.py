@@ -12,8 +12,9 @@ class Tens_Factorizer():
     def __init__(self):
         self.K = None
         self.factors = None
+        self.delta = None
 
-    def factorize(K, rank, correct=False, correction_args=None):
+    def factorize(K, rank, correct=False, args=None):
         '''
         Finds tensor decomposition of given tensor.
 
@@ -25,7 +26,7 @@ class Tens_Factorizer():
             rank of tensor decomposition
         correct : bool
             whether to use the correction method (minimize sensitivity)
-        correction_args : dict
+        args : dict
             correction algorithm arguments. None if correct=False.
 
         Output
@@ -58,28 +59,39 @@ class Tens_Factorizer():
 
 
 class CPD_Factorizer(Tens_Factorizer):
-    def factorize(self, K, rank, correct=False, correction_args=None):
-        self.K = K.reshape((K.shape[0],K.shape[1],-1)).permute((0,2,1))
-        self.K = self.K.detach().numpy()
-        self.factors = decomposition.parafac(self.K, rank).factors
+    def factorize(self, K, rank, correct=False, args=None):
+        self.K = K
+        self.factors = decomposition.parafac(K, rank).factors
         if correct:
-            self.correct(**correction_args)
+            self.delta = LA.norm(self.K - self.contract())
+            self.correct(**args)
         return self.factors
 
-    def correct(self, delta, n_iters):
-        A, B, C = self.factors
-        for _ in range(n_iters):
-            A = self.optimization_step(self.K, A, B, C, delta)
-            B = self.optimization_step(self.K.transpose((1,0,2)), B, A, C, delta)
-            C = self.optimization_step(self.K.transpose((2,0,1)), C, A, B, delta)
-        self.factors =  torch.tensor(A), torch.tensor(B), torch.tensor(C)
+    def correct(self, n_iters):
+        for i in range(n_iters):
+            for j in range(3):
+                self.optimization_step()
+                self.cyclic_shift()
 
-    def optimization_step(self, K, A, B, C, delta):
+    def cyclic_shift(self):
+        self.K = self.K.transpose((2,0,1))
+        self.factors = [
+            self.factors[2],
+            self.factors[0],
+            self.factors[1]
+        ]
+
+    def contract(self):
+        A, B, C = self.factors
+        return np.einsum('ia,ja,ka->ijk', A, B, C)
+
+    def optimization_step(self):
+        A, B, C = self.factors
         scaler = self.find_scaler(B, C)
         regressor = LA.khatri_rao(B, C).T / scaler[:, None]
-        target = K.reshape((K.shape[0],-1), order='C')
-        A_raw = Linreg_Optimizer().solve_matrix(regressor, target, delta)
-        return A_raw * scaler
+        target = self.K.reshape((self.K.shape[0], -1), order='C')
+        A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
+        self.factors[0] = A_raw * scaler
 
     def find_scaler(self, B, C):
         return np.sqrt(
