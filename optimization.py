@@ -35,7 +35,7 @@ class SCQP_Optimizer():
             optimal value
         '''
         s, c = 1 + (q - q[0]) / LA.norm(b), b / LA.norm(b)
-        s_, counts = np.unique(s.round(decimals=5), return_counts=True)
+        s_, counts = np.unique(s.round(decimals=7), return_counts=True)
         inds = np.concatenate(([0], np.cumsum(counts)))
         c_grid = [c[inds[j]:inds[j+1]] for j in range(s_.shape[0])]
         c_ = np.array([LA.norm(segment) for segment in c_grid])
@@ -154,6 +154,8 @@ class Linreg_Optimizer():
         u, s, vh = LA.svd(A, full_matrices=False)
         y_ = u.T @ y
         comp = y - u @ y_
+        assert(delta < LA.norm(y))
+        assert(delta >= LA.norm(comp))
         delta_  = np.sqrt(delta**2 - np.inner(comp, comp))
         q = delta_ / s**2
         b = -y_ / s**2
@@ -181,6 +183,6 @@ class Linreg_Optimizer():
         '''
         output_shape = (B.shape[0], A.shape[0])
         B_vec = B.flatten(order='C')
-        A_new = LA.kron(A, np.eye(B.shape[0])).T
+        A_new = LA.kron(np.eye(B.shape[0]), A).T
         x_vec = self.solve(A_new, B_vec, delta)
         return x_vec.reshape(output_shape, order='C')

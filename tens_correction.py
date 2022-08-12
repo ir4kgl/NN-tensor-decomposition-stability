@@ -109,14 +109,12 @@ class TKD_Factorizer(Tens_Factorizer):
         self.core = None
         self.rank = None
         self.factors = None
-        self.core_shape = None
         self.n_factors = 2
 
     def factorize(self, K, rank, correct=False, args=None):
         self.K = K
         self.rank = rank
-        self.core_shape = (self.rank[0], self.rank[1], self.K.shape[2])
-        modes = (0,1)
+        modes = (0,2)
         self.core, self.factors = partial_tucker(self.K, modes, rank)
         if correct:
             self.delta = LA.norm(self.K - self.contract())
@@ -133,24 +131,26 @@ class TKD_Factorizer(Tens_Factorizer):
 
     def optimization_step_core(self):
         L = self.find_L(core=True)
-        regressor = LA.kron(*self.factors)
-        regressor = LA.solve_triangular(L, regressor.T, lower=True)
-        target = self.K.reshape((-1, self.K.shape[2]), order='C').T
+        regressor = LA.kron(self.factors[0], self.factors[1]).T
+        regressor = LA.solve_triangular(L, regressor, lower=True)
+        target = self.K.transpose(1,0,2).reshape((self.K.shape[1], -1), order='C')
         A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
-        self.core = LA.solve_triangular(L.T, A_raw.T).reshape(self.core_shape)
+        self.core = LA.solve_triangular(L.T, A_raw.T)
+        self.core = self.core.reshape(self.rank[0], self.rank[1], -1, order='C')
+        self.core = self.core.transpose((0,2,1))
 
     def optimization_step_factors(self):
         B, C = self.factors
         L = self.find_L()
-        regressor = np.einsum('ick,jc->ijk',self.core, C).reshape((self.rank[0], -1))
+        regressor = np.einsum('ijc,kc->ijk',self.core, C).reshape((self.rank[0], -1), order='C')
         regressor = LA.solve_triangular(L, regressor, lower=True)
         target = self.K.reshape((self.K.shape[0], -1), order='C')
         B_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
         self.factors[0] = LA.solve_triangular(L.T, B_raw.T).T
 
     def factors_shift(self):
-        self.K = self.K.transpose((1,0,2))
-        self.core = self.core.transpose((1,0,2))
+        self.K = self.K.transpose((2,1,0))
+        self.core = self.core.transpose((2,1,0))
         self.factors = [
             self.factors[1],
             self.factors[0]
@@ -163,7 +163,7 @@ class TKD_Factorizer(Tens_Factorizer):
     def contract(self):
         A = self.core
         B, C = self.factors
-        return np.einsum('bck,ib,jc->ijk', A, B, C)
+        return np.einsum('bjc,ib,kc->ijk', A, B, C)
 
     def find_L(self, core=False):
         B, C = self.factors
