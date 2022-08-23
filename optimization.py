@@ -1,6 +1,7 @@
 import numpy as np
+import torch
 
-from scipy import linalg as LA
+from torch import linalg as LA
 from scipy import optimize
 
 
@@ -24,23 +25,23 @@ class SCQP_Optimizer():
 
         Parameters
         ----------
-        b : np.array
+        b : torch.tensor
             1D-vector, non-zero
-        q : np.array
+        q : torch.tensor
             1D-vector, 0 < q[i] <= q[i + 1] for all i.
 
         Output
         ----------
-        x :  np.array
+        x : torch.tensor
             optimal value
         '''
-        s, c = 1 + (q - q[0]) / LA.norm(b), b / LA.norm(b)
-        s_, counts = np.unique(s.round(decimals=7), return_counts=True)
+        s, c = 1 + (q - q[0]) / torch.norm(b), b / torch.norm(b)
+        s_, counts = torch.unique(s.round(decimals=7), return_counts=True)
         inds = np.concatenate(([0], np.cumsum(counts)))
         c_grid = [c[inds[j]:inds[j+1]] for j in range(s_.shape[0])]
-        c_ = np.array([LA.norm(segment) for segment in c_grid])
+        c_ = torch.tensor([torch.norm(segment) for segment in c_grid])
         z = self.solve_diag_unique(s_, c_)
-        res =  np.concatenate(
+        res =  torch.concat(
             [c_grid[j] * z[j] / c_[j] for j in range(s_.shape[0])]
         )
         return res
@@ -53,12 +54,12 @@ class SCQP_Optimizer():
         s_, c_ = q[self.indices], b[self.indices]
         if b[0] == 0:
             pos = c_[1:] / (1 - s_[1:])
-            d = np.inner(pos, pos)
+            d = torch.inner(pos, pos)
             if d < 1 and s_[0] < s_[1]:
                 return self.solve_particular_case(pos, d)
             else:
                 x = self.solve_diag_nnz(s_[1:] + (1 - s_[1]), c_[1:])
-                self.complete_solution(np.concatenate([0],x))
+                self.complete_solution(torch.concat([0],x))
         x = self.solve_diag_nnz(s_, c_)
         return self.complete_solution(x)
 
@@ -79,12 +80,12 @@ class SCQP_Optimizer():
         return sol.x
 
     def lam_oracle(self, x):
-        signed_res = 1 - LA.norm(self.c / (x - self.s))
+        signed_res = 1 - torch.norm(self.c / (x - self.s))
         return signed_res ** 2
 
     def find_bounds(self):
-        t_1 = self.root(self.c[0], self.s[1] - self.s[0])
-        t_2 = self.root(self.c[0], self.s[-1] - self.s[0])
+        t_1 = self.root(self.c[0].item(), self.s[1] - self.s[0])
+        t_2 = self.root(self.c[0].item(), self.s[-1] - self.s[0])
         return [1 - t_1, 1 - t_2]
 
     def root(self, c, d):
@@ -104,14 +105,14 @@ class SCQP_Optimizer():
 
 
     def solve_particular_case(self, pos, d):
-        x = np.zeros(pos.shape)
-        x[0] = np.sqrt(1 - d)
+        x = torch.zeros(pos.shape)
+        x[0] = torch.sqrt(1 - d)
         x[1:] = pos
         return self.complete_solution(x, check_sign=True)
 
 
     def complete_solution(self, x, check_sign=False):
-        new_x = np.zeros(self.b.shape)
+        new_x = torch.zeros(self.b.shape)
         new_x[self.indices] = x
         if check_sign:
             alt_x = new_x
@@ -122,7 +123,7 @@ class SCQP_Optimizer():
 
 
     def func(self, x):
-        return np.inner(x, self.q * x) / 2 + np.inner(self.b, x)
+        return torch.inner(x, self.q * x) / 2 + torch.inner(self.b, x)
 
 
 
@@ -139,24 +140,24 @@ class Linreg_Optimizer():
 
         Parameters
         ----------
-        A : np.array
+        A : torch.tensor
             Regressor matrix. N_1 >= N_2.
-        y : np.array
+        y : torch.tensor
             Vector of dependent variables
         delta: float
             Bound on the regression error. Must be nonnegative.
 
         Output
         ----------
-        x :  np.array
+        x :  torch.tensor
             optimal value
         '''
         u, s, vh = LA.svd(A, full_matrices=False)
         y_ = u.T @ y
         comp = y - u @ y_
-        assert(delta < LA.norm(y))
-        assert(delta >= LA.norm(comp))
-        delta_  = np.sqrt(delta**2 - np.inner(comp, comp))
+        assert(delta < torch.norm(y))
+        assert(delta >= torch.norm(comp))
+        delta_  = torch.sqrt(delta**2 - torch.inner(comp, comp))
         q = delta_ / s**2
         b = -y_ / s**2
         z = SCQP_Optimizer().solve_diag(q, b)
@@ -171,18 +172,18 @@ class Linreg_Optimizer():
 
         Parameters
         ----------
-        A, B : np.array
+        A, B : torch.tensor
             2D-arrays.
         delta: float
             Bound on the regression error. Must be nonnegative.
 
         Output
         ----------
-        X :  np.array
+        X :  torch.tensor
             optimal value
         '''
         output_shape = (B.shape[0], A.shape[0])
-        B_vec = B.flatten(order='C')
-        A_new = LA.kron(np.eye(B.shape[0]), A).T
+        B_vec = B.flatten()
+        A_new = torch.kron(torch.eye(B.shape[0]), A.contiguous()).T
         x_vec = self.solve(A_new, B_vec, delta)
-        return x_vec.reshape(output_shape, order='C')
+        return x_vec.reshape(output_shape)

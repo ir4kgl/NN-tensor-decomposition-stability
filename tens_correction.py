@@ -1,8 +1,12 @@
-import numpy as np
 from optimization import Linreg_Optimizer
-from scipy import linalg as LA
 
+from torch import linalg as LA
+
+import tensorly as tl
 from tensorly.decomposition import parafac, partial_tucker
+from tensorly.tenalg import khatri_rao
+
+tl.set_backend('pytorch')
 
 
 class Tens_Factorizer():
@@ -42,16 +46,16 @@ class Tens_Factorizer():
 
         Parameters
         ----------
-        K: np.array
+        K: torch.tensor
             given tensor
-        factors: tuple of np.array
+        factors: tuple of torch.tensor
             initial decomposition
         delta: float
             approximation error
 
         Output
         ----------
-        new_factors: tuple of np.array
+        new_factors: tuple of torch.tensor
             corrected decomposition
         '''
         raise NotImplementedError
@@ -67,7 +71,7 @@ class CPD_Factorizer(Tens_Factorizer):
         self.K = K
         self.factors = parafac(K, rank).factors
         if correct:
-            self.delta = LA.norm(self.K - self.contract())
+            self.delta = torch.norm(self.K - self.contract(), p=2)
             self.correct(**args)
         return self.factors
 
@@ -78,7 +82,7 @@ class CPD_Factorizer(Tens_Factorizer):
                 self.cyclic_shift()
 
     def cyclic_shift(self):
-        self.K = self.K.transpose((2,0,1))
+        self.K = self.K.permute((2,0,1))
         self.factors = [
             self.factors[2],
             self.factors[0],
@@ -87,20 +91,28 @@ class CPD_Factorizer(Tens_Factorizer):
 
     def contract(self):
         A, B, C = self.factors
-        return np.einsum('ia,ja,ka->ijk', A, B, C)
+        return torch.einsum('ia,ja,ka->ijk', A, B, C)
 
     def optimization_step(self):
         A, B, C = self.factors
         scaler = self.find_scaler(B, C)
-        regressor = LA.khatri_rao(B, C).T / scaler[:, None]
-        target = self.K.reshape((self.K.shape[0], -1), order='C')
+        regressor = self.khatri_rao(B, C).T / scaler[:, None]
+        target = self.K.reshape((self.K.shape[0], -1))
         A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
         self.factors[0] = A_raw / scaler
 
     def find_scaler(self, B, C):
-        return np.sqrt(
-            LA.norm(B, axis=0)**2 + LA.norm(C, axis=0)**2
+        return torch.sqrt(
+            torch.norm(B, dim=0, p=2)**2 + torch.norm(C, dim=0, p=2)**2
         )
+
+    def khatri_rao(self, A, B):
+        out_shape = (A.shape[0] * B.shape[0], A.shape[1])
+        res = torch.zeros(out_shape)
+        for j in range(out_shape[1]):
+            cur_col = torch.einsum('i,j->ij', A[:,j], B[:,j]).ravel()
+            res[:, j] = cur_col
+        return res
 
 
 class TKD_Factorizer(Tens_Factorizer):
@@ -114,9 +126,9 @@ class TKD_Factorizer(Tens_Factorizer):
     def factorize(self, K, rank, correct=False, args=None):
         self.K = K
         self.rank = rank
-        self.core, self.factors = partial_tucker(self.K, modes=(0,2), rank)
+        self.core, self.factors = partial_tucker(self.K, modes=(0,2), rank=rank)
         if correct:
-            self.delta = LA.norm(self.K - self.contract())
+            self.delta = torch.norm(self.K - self.contract())
             self.correct(**args)
         return self.core, self.factors
 
@@ -129,26 +141,26 @@ class TKD_Factorizer(Tens_Factorizer):
 
     def optimization_step_core(self):
         L = self.find_L(core=True)
-        regressor = LA.kron(self.factors[0], self.factors[1]).T
-        regressor = LA.solve_triangular(L, regressor, lower=True)
-        target = self.K.transpose(1,0,2).reshape((self.K.shape[1], -1), order='C')
+        regressor = torch.kron(self.factors[0], self.factors[1]).T
+        regressor = LA.solve_triangular(L, regressor, upper=False)
+        target = self.K.permute((1,0,2)).reshape((self.K.shape[1], -1))
         A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
-        self.core = LA.solve_triangular(L.T, A_raw.T)
-        self.core = self.core.reshape(self.rank[0], self.rank[1], -1, order='C')
-        self.core = self.core.transpose((0,2,1))
+        self.core = LA.solve_triangular(L.T, A_raw.T, upper=True)
+        self.core = self.core.reshape(self.rank[0], self.rank[1], -1)
+        self.core = self.core.permute((0,2,1))
 
     def optimization_step_factors(self):
         B, C = self.factors
         L = self.find_L()
-        regressor = np.einsum('ijc,kc->ijk', self.core, C).reshape((self.rank[0], -1), order='C')
-        regressor = LA.solve_triangular(L, regressor, lower=True)
-        target = self.K.reshape((self.K.shape[0], -1), order='C')
+        regressor = torch.einsum('ijc,kc->ijk', self.core, C).reshape((self.rank[0], -1))
+        regressor = LA.solve_triangular(L, regressor, upper=False)
+        target = self.K.reshape((self.K.shape[0], -1))
         B_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
-        self.factors[0] = LA.solve_triangular(L.T, B_raw.T).T
+        self.factors[0] = LA.solve_triangular(L.T, B_raw.T, upper=True).T
 
     def factors_shift(self):
-        self.K = self.K.transpose((2,1,0))
-        self.core = self.core.transpose((2,1,0))
+        self.K = self.K.permute((2,1,0))
+        self.core = self.core.permute((2,1,0))
         self.factors = [
             self.factors[1],
             self.factors[0]
@@ -161,18 +173,18 @@ class TKD_Factorizer(Tens_Factorizer):
     def contract(self):
         A = self.core
         B, C = self.factors
-        return np.einsum('bjc,ib,kc->ijk', A, B, C)
+        return torch.einsum('bjc,ib,kc->ijk', A, B, C)
 
     def find_L(self, core=False):
         B, C = self.factors
         r0, r1 = self.rank
         W = None
         if core:
-            W = LA.kron(B.T @ B, np.eye(r1)) + LA.kron(np.eye(r0), C.T @ C)
+            W = torch.kron(B.T @ B, torch.eye(r1)) + torch.kron(torch.eye(r0), C.T @ C)
         else:
             A = self.core.reshape((self.rank[0], -1))
-            W = A @ A.T + np.eye(self.rank[0])
-        return LA.cholesky(W, lower=True)
+            W = A @ A.T + torch.eye(self.rank[0])
+        return LA.cholesky(W)
 
 
 class TC_factorizer(Tens_Factorizer):
@@ -187,13 +199,13 @@ class TC_factorizer(Tens_Factorizer):
         self.rank = rank
         self.factors = tensor_ring(K, rank).factors
         if correct:
-            self.delta = LA.norm(self.K - self.contract())
+            self.delta = torch.norm(self.K - self.contract(), p=2)
             self.correct(**args)
         return self.factors
 
     def contract(self):
         A, B, C = self.factors
-        return np.einsum('kai,ibj,jck->abc', A, B, C)
+        return torch.einsum('kai,ibj,jck->abc', A, B, C)
 
     def correct(self, n_iters):
         for i in range(n_iters):
@@ -202,7 +214,7 @@ class TC_factorizer(Tens_Factorizer):
                 self.cyclic_shift()
 
     def cyclic_shift(self):
-        self.K = self.K.transpose((2,0,1))
+        self.K = self.K.permute((2,0,1))
         self.factors = [
             self.factors[2],
             self.factors[0],
@@ -218,18 +230,18 @@ class TC_factorizer(Tens_Factorizer):
         A, B, C = self.factors
         r0, r1, r2 = self.rank
         L = self.find_L()
-        regressor = np.einsum('ibj,jck->ikbc', B, C).reshape((r0 * r2, -1), order='C')
+        regressor = torch.einsum('ibj,jck->ikbc', B, C).reshape((r0 * r2, -1))
         regressor = LA.solve_triangular(L, regressor, lower=True)
-        target = self.K.reshape((self.K.shape[0], -1), order='C')
+        target = self.K.permute((self.K.shape[0], -1))
         A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
         self.factors[0] = LA.solve_triangular(L.T, A_raw.T)
-        self.factors[0] = self.factors[0].reshape((r0, r2, -1), order='C')
-        self.factors[0] = self.factors[0].transpose((1,2,0))
+        self.factors[0] = self.factors[0].reshape((r0, r2, -1))
+        self.factors[0] = self.factors[0].permute((1,2,0))
 
     def find_L(self, core=False):
         A, B, C = self.factors
         r0, r1, r2 = self.rank
-        B = B.reshape((r0, -1), order='C')
-        C = C.transpose(2,1,0).reshape((r2, -1), order='C')
-        W = LA.kron(B @ B.T, np.eye(r2)) + LA.kron(np.eye(r0), C @ C.T)
-        return LA.cholesky(W, lower=True)
+        B = B.reshape((r0, -1))
+        C = C.transpose(2,1,0).reshape((r2, -1))
+        W = torch.kron(B @ B.T, torch.eye(r2)) + torch.kron(torch.eye(r0), C @ C.T)
+        return LA.cholesky(W)
