@@ -36,7 +36,7 @@ class SCQP_Optimizer():
             optimal value
         '''
         s, c = 1 + (q - q[0]) / torch.norm(b), b / torch.norm(b)
-        s_, counts = torch.unique(s.round(decimals=7), return_counts=True)
+        s_, counts = np.unique(s.round(decimals=7).cpu(), return_counts=True)
         inds = np.concatenate(([0], np.cumsum(counts)))
         c_grid = [c[inds[j]:inds[j+1]] for j in range(s_.shape[0])]
         c_ = torch.tensor([torch.norm(segment) for segment in c_grid])
@@ -184,6 +184,6 @@ class Linreg_Optimizer():
         '''
         output_shape = (B.shape[0], A.shape[0])
         B_vec = B.flatten()
-        A_new = torch.kron(torch.eye(B.shape[0]), A.contiguous()).T
+        A_new = torch.kron(torch.eye(B.shape[0]).cuda(), A.contiguous()).T
         x_vec = self.solve(A_new, B_vec, delta)
         return x_vec.reshape(output_shape)
