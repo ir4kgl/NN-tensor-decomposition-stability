@@ -69,7 +69,7 @@ class CPD_Factorizer(Tens_Factorizer):
 
     def factorize(self, K, rank, correct=False, args=None):
         self.K = K
-        self.factors = parafac(K, rank).factors
+        self.factors = parafac(K, rank, svd='randomized_svd').factors
         if correct:
             self.delta = torch.norm(self.K - self.contract(), p=2)
             self.correct(**args)
