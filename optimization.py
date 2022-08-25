@@ -132,7 +132,7 @@ class Linreg_Optimizer():
     Linear regression with bound constraint solver.
     '''
 
-    def solve(self, A, y, delta):
+    def solve(self, A, y, delta, repeats=1):
         '''
         Minimizes
             f(x) = ||x||^2
@@ -153,15 +153,17 @@ class Linreg_Optimizer():
             optimal value
         '''
         u, s, vh = LA.svd(A, full_matrices=False)
-        y_ = u.T @ y
-        comp = y - u @ y_
+        y_ = torch.concat([u.T @ y[u.shape[0] * j:u.shape[0] * (j+1)] for j in range(repeats)])
+        comp = y - torch.concat([u @ y_[u.shape[1] * j:u.shape[1] * (j+1)] for j in range(repeats)])
         assert(delta < torch.norm(y))
         assert(delta >= torch.norm(comp))
         delta_  = torch.sqrt(delta**2 - torch.inner(comp, comp))
+        s =  torch.concat([s for _ in range(repeats)])
         q = delta_ / s**2
         b = -y_ / s**2
         z = SCQP_Optimizer().solve_diag(q, b)
-        return vh.T @ ( (y_ - delta_ * z) / s)
+        res = (y_ - delta_ * z) / s
+        return torch.concat([vh.T @ res[vh.shape[0] * j:vh.shape[0] * (j+1)] for j in range(repeats)])
 
 
     def solve_matrix(self, A, B, delta):
@@ -183,7 +185,5 @@ class Linreg_Optimizer():
             optimal value
         '''
         output_shape = (B.shape[0], A.shape[0])
-        B_vec = B.flatten()
-        A_new = torch.kron(torch.eye(B.shape[0]).cuda(), A.contiguous()).T
-        x_vec = self.solve(A_new, B_vec, delta)
+        x_vec = self.solve(A.T, B.flatten(), delta, repeats=B.shape[0])
         return x_vec.reshape(output_shape)
