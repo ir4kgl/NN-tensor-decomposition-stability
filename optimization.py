@@ -36,7 +36,7 @@ class SCQP_Optimizer():
             optimal value
         '''
         s, c = 1 + (q - q[0]) / torch.norm(b), b / torch.norm(b)
-        s_, counts = np.unique(s.round(decimals=7).cpu(), return_counts=True)
+        s_, counts = np.unique(s.round(decimals=4).cpu(), return_counts=True)
         inds = np.concatenate(([0], np.cumsum(counts)))
         c_grid = [c[inds[j]:inds[j+1]] for j in range(s_.shape[0])]
         c_ = torch.tensor([torch.norm(segment) for segment in c_grid])
@@ -50,7 +50,7 @@ class SCQP_Optimizer():
     def solve_diag_unique(self, q, b):
         self.q = q
         self.b = b
-        self.indices = np.concatenate(([0], b[1:].nonzero()[0] + 1))
+        self.indices = np.concatenate(([0], b[1:].nonzero().T[0] + 1))
         s_, c_ = q[self.indices], b[self.indices]
         if b[0] == 0:
             pos = c_[1:] / (1 - s_[1:])
@@ -71,17 +71,15 @@ class SCQP_Optimizer():
         return c / (lam - s)
 
     def find_lam(self):
-        sol = optimize.minimize_scalar(
+        sol = optimize.root_scalar(
             lambda x : self.lam_oracle(x),
-            bounds=self.find_bounds(),
-            method='bounded',
+            bracket=self.find_bounds(),
         )
-        assert(sol.success)
-        return sol.x
+        assert(sol.converged)
+        return sol.root
 
-    def lam_oracle(self, x):
-        signed_res = 1 - torch.norm(self.c / (x - self.s))
-        return signed_res ** 2
+    def lam_oracle(self, lam):
+        return 1 - (torch.norm(self.c / (lam - self.s)) ** 2)
 
     def find_bounds(self):
         t_1 = self.root(self.c[0].item(), self.s[1] - self.s[0])
