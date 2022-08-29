@@ -36,7 +36,7 @@ class SCQP_Optimizer():
             optimal value
         '''
         s, c = 1 + (q - q[0]) / torch.norm(b), b / torch.norm(b)
-        s_, counts = np.unique(s.round(decimals=4).cpu(), return_counts=True)
+        s_, counts = np.unique(s.round(decimals=6).cpu(), return_counts=True)
         inds = np.concatenate(([0], np.cumsum(counts)))
         c_grid = [c[inds[j]:inds[j+1]] for j in range(s_.shape[0])]
         c_ = torch.tensor([torch.norm(segment) for segment in c_grid])

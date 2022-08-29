@@ -1,5 +1,6 @@
-# from optimization import Linreg_Optimizer
+from optimization import Linreg_Optimizer
 
+import torch
 from torch import linalg as LA
 
 import tensorly as tl
@@ -62,24 +63,31 @@ class Tens_Factorizer():
 
 
 class CPD_Factorizer(Tens_Factorizer):
-    def __init__(self):
+    def __init__(self, max_iters=20000):
         super().__init__()
-        self.factors = None
         self.n_factors = 3
+        self.max_iters = max_iters
+        self.prev = None
 
-    def factorize(self, K, rank, correct=False, args=None):
+    def factorize(self, K, rank, correct=False):
         self.K = K
-        self.factors = parafac(K, rank, svd='randomized_svd').factors
+        self.factors = parafac(K, rank, init='random', random_state=1).factors
         if correct:
-            self.delta = torch.norm(self.K - self.contract(), p=2)
-            self.correct(**args)
+            self.delta = torch.norm(self.K - self.contract())
+            self.correct()
         return self.factors
 
-    def correct(self, n_iters):
-        for i in range(n_iters):
+    def correct(self):
+        init = self.ss()
+        for i in range(self.max_iters):
             for j in range(self.n_factors):
                 self.optimization_step()
                 self.cyclic_shift()
+            cur_ss = self.ss()
+            if self.prev is not None:
+                if (self.prev - cur_ss) / init < 1e-5:
+                    return
+            self.prev = cur_ss
 
     def cyclic_shift(self):
         self.K = self.K.permute((2,0,1))
@@ -96,23 +104,38 @@ class CPD_Factorizer(Tens_Factorizer):
     def optimization_step(self):
         A, B, C = self.factors
         scaler = self.find_scaler(B, C)
-        regressor = self.khatri_rao(B, C).T / scaler[:, None]
+        regressor = (self.khatri_rao(B, C) / scaler).T
         target = self.K.reshape((self.K.shape[0], -1))
         A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
         self.factors[0] = A_raw / scaler
+        del A_raw
+        torch.cuda.empty_cache()
 
     def find_scaler(self, B, C):
+        n1, n2, n3 = self.K.shape
         return torch.sqrt(
-            torch.norm(B, dim=0, p=2)**2 + torch.norm(C, dim=0, p=2)**2
+            n3 * torch.norm(B, dim=0)**2 + n2 * torch.norm(C, dim=0)**2
         )
 
     def khatri_rao(self, A, B):
+        assert(A.shape[1] == B.shape[1])
         out_shape = (A.shape[0] * B.shape[0], A.shape[1])
         res = torch.zeros(out_shape).cuda()
         for j in range(out_shape[1]):
             cur_col = torch.einsum('i,j->ij', A[:,j], B[:,j]).ravel()
             res[:, j] = cur_col
         return res
+
+    def ss(self):
+        A, B, C = self.factors
+        n1, n2, n3 = self.K.shape
+        A_norm = torch.norm(A, dim=0)**2
+        B_norm = torch.norm(B, dim=0)**2
+        C_norm = torch.norm(C, dim=0)**2
+        t1 = torch.inner(B_norm, C_norm)
+        t2 = torch.inner(A_norm, C_norm)
+        t3 = torch.inner(A_norm, B_norm)
+        return t1 * n1 + t2 * n2 + t3 * n3
 
 
 class TKD_Factorizer(Tens_Factorizer):
@@ -188,19 +211,22 @@ class TKD_Factorizer(Tens_Factorizer):
 
 
 class TC_factorizer(Tens_Factorizer):
-    def __init__(self):
+    def __init__(self, maxiters=200):
         super().__init__()
         self.rank = None
         self.factors = None
         self.n_factors = 3
+        self.old = None
+        self.maxiters = maxiters
+        self.prev = None
 
-    def factorize(self, K, rank, n_iters_als, correct=False, args=None):
+    def factorize(self, K, rank, n_iters_als, correct=False):
         self.K = K
         self.rank = rank
         self.als_decomposition(K, rank, n_iters_als)
         if correct:
             self.delta = torch.norm(self.K - self.contract(), p=2)
-            self.correct(**args)
+            self.correct()
         return self.factors
 
     def contract(self):
@@ -210,20 +236,36 @@ class TC_factorizer(Tens_Factorizer):
     def als_decomposition(self, K, rank, n_iters):
         n0, n1, n2 = self.K.size()
         r0, r1, r2 = self.rank
+        gen = torch.Generator()
+        gen.manual_seed(2147483647)
         self.factors = [
-            torch.empty((r2,n0,r0)).normal_().cuda(),
-            torch.empty((r0,n1,r1)).normal_().cuda(),
-            torch.empty((r1,n2,r2)).normal_().cuda(),
+            torch.empty((r0,n0,r1)).normal_(generator=gen).cuda(),
+            torch.empty((r1,n1,r2)).normal_(generator=gen).cuda(),
+            torch.empty((r2,n2,r0)).normal_(generator=gen).cuda(),
         ]
         for i in range(n_iters):
             for j in range(self.n_factors):
-                self.als_step()
+                self.als_step(j)
+                self.cyclic_shift()
+            diff = torch.norm(self.K -self.contract()).item()
+            if self.old is not None:
+                if self.old - diff < 1e-6:
+                    return self.factors
+            self.old = diff
 
-    def correct(self, n_iters):
-        for i in range(n_iters):
+
+    def correct(self):
+        init = self.ss()
+        for i in range(self.maxiters):
             for j in range(self.n_factors):
                 self.optimization_step()
                 self.cyclic_shift()
+            cur_ss = self.ss()
+            if self.prev is not None:
+                print(self.prev - cur_ss)
+                if (self.prev - cur_ss) / init < 1e-5:
+                    return
+            self.prev = cur_ss
 
     def cyclic_shift(self):
         self.K = self.K.permute((2,0,1))
@@ -238,14 +280,16 @@ class TC_factorizer(Tens_Factorizer):
             self.rank[1],
         ]
 
-    def als_step(self):
+    def als_step(self, j):
+        old = self.factors[0].clone()
         A, B, C = self.factors
         r0, r1, r2 = self.rank
-        regressor = torch.einsum('ibj,jck->bcik', B, C).reshape((-1, r0 * r2))
+        regressor = torch.einsum('ibj,jck->bcik', B, C).reshape((-1, r0 * r1))
         target = self.K.reshape((self.K.shape[0], -1)).permute((1,0))
-        self.factors[0] = LA.lstsq(regressor, target)[0]
-        self.factors[0] /= self.factors[0].max(0, keepdim=True)[0]
-        self.factors[0] = self.factors[0].reshape((r0, r2, -1))
+        if j < 2:
+            self.factors[0] /= self.factors[0].max(dim=1)[0][:,None]
+        self.factors[0] = LA.lstsq(regressor, target,)[0]
+        self.factors[0] = self.factors[0].reshape((r1, r0, -1))
         self.factors[0] = self.factors[0].permute((1,2,0))
 
     def optimization_step(self):
@@ -256,7 +300,7 @@ class TC_factorizer(Tens_Factorizer):
         regressor = LA.solve_triangular(L, regressor, upper=False)
         target = self.K.reshape((self.K.shape[0], -1))
         A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
-        self.factors[0] = LA.solve_triangular(L.T, A_raw.T)
+        self.factors[0] = LA.solve_triangular(L.T, A_raw.T, upper=True)
         self.factors[0] = self.factors[0].reshape((r0, r2, -1))
         self.factors[0] = self.factors[0].permute((1,2,0))
 
@@ -267,3 +311,11 @@ class TC_factorizer(Tens_Factorizer):
         C = C.permute((2,1,0)).reshape((r2, -1))
         W = torch.kron(B @ B.T, torch.eye(r2).cuda()) + torch.kron(torch.eye(r0).cuda(), C @ C.T)
         return LA.cholesky(W)
+
+    def ss(self):
+        A, B, C = self.factors
+        n1, n2, n3 = self.K.shape
+        t1 = torch.einsum('abc,abd,cfe,dfe', B, B, C, C)
+        t2 = torch.einsum('abc,abd,cfe,dfe', A, A, C, C)
+        t3 = torch.einsum('abc,abd,cfe,dfe', A, A, B, B)
+        return t1 * n1 + t2 * n2 + t3 * n3
