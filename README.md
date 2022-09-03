@@ -21,11 +21,15 @@ model = torchvision.models.resnet18()
 tn = CPD_Conv_2D
 tn_args = {'rank': 10}
 device = torch.device("cpu")
+submodule_name = 'layer1.1.conv2'
 
-replace_conv_layer_2D(model, 'layer4', 1, 'conv1', tn, tn_args, device)
+replace_conv_layer_2D(model, submodule_name, tn, tn_args, device)
 ``` 
 
-Кроме того, каждый имплементированный класс обладает методом  `calc_penalty()`, который вычисляет и возвращает значение функции чувствительности данного слоя.
+### Регуляризатор функции чувствительности
+---
+
+Каждый имплементированный класс обладает методом  `calc_penalty()`, который вычисляет и возвращает значение функции чувствительности данного слоя.
 
 Для того, чтобы применить регуляризацию чувствительности во время обучения, достаточно к основной функции потерь (напр., `nn.CrossEntropyLoss`) прибавить соответствующий штраф.
 
@@ -36,14 +40,52 @@ from tens_regularizer_2d import CPD_Sensitivity_Regularizer_2D
 
 criterion = torch.nn.CrossEntropyLoss()
 reg_coef = 1e-6
-replaced_layer = model.layer4[0].conv1
+replaced_layer = 'layer1.1.conv2'
 ...
 
 for (images, classes) in dataloader:
     loss = criterion(model(images), classes)
-    loss += reg_coef * replaced_layer.calc_penalty()     # add penalty based on sensitivity function
+    loss += reg_coef * model.get_submodule(replaced_layer).calc_penalty()    # add penalty based on sensitivity function
     loss.backward()
     ...
 ``` 
+
+### Поиск устойчивого тензорного разложения
+---
+
+Альтернативный подход к повышению устойчивости сжатой модели -- поиск тензорного разложения сверточного слоя обученной модели с минимальным значением функции чувствительности.
+
+Модуль `tens_correction.py` содержит методы поиска устойчивых тензорных разложений.
+
+Для того, чтобы дообучить сжатую модель с найденным устойчивым тензорным разложением сверточного слоя, достаточно явно передать в метод `replace_conv_layer_2D` факторы тензорной сети.
+
+
+##### Пример
+
+```python
+from tens_conv_2d import replace_conv_layer_2D, CPD_Conv_2D
+from tens_correction import factorize_CPD
+
+model = torchvision.models.resnet18(weights=ResNet18_Weights)
+replaced_layer = 'layer1.1.conv2'
+RANK = 10
+
+K = model.get_submodule(replaced_layer).weight
+args = {'delta' : 10, 'n_iters' : 5}
+A, B, C = factorize_CPD(K, RANK, correct=True, correction_args=args)
+
+tn = CPD_Conv_2D
+tn_args = {'rank': RANK, 'factors' : (A, B, C)}
+device = torch.device("cpu")
+
+replace_conv_layer_2D(model, replaced_layer, tn, tn_args, device)
+
+...
+# fine-tuning the model
+...
+```
+
+
+
 
 
