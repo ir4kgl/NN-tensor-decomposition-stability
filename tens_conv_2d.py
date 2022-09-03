@@ -6,21 +6,16 @@ from functools import reduce
 def replace_conv_layer_2D(model, layer, tn, tn_args, device):
     '''
     Replace given convolutional layer with tensor decomposition.
-
     Parameters
     ----------
     model :
         model to compress
-
     layer : string
         model's convolutional layer to compress
-
     tn : Tens_Conv_2D_Base subclass
         class of tensor factorized convolutional layer
-
     tn_args : dict
         tn's constructor arguments
-
     device : torch.device
     '''
     submodule_names = layer.split(sep='.')
@@ -33,15 +28,12 @@ def replace_conv_layer_2D(model, layer, tn, tn_args, device):
 class Tens_Conv_2D_Base(nn.Module):
     '''
     Base class for 2D convolutional kernel represented as tensor decomposition.
-
     Parameters
     ----------
         orig_layer :
             original convolutional layer to replace with a tensor decomposition.
-
         rank : int or tuple of ints
             rank of tensor decomposition.
-
     '''
     def __init__(self, orig_layer, rank):
         super().__init__()
@@ -77,7 +69,6 @@ class Tens_Conv_2D_Base(nn.Module):
     def calc_terms(self, A, B, C):
         '''
         Calculates auxiliary terms for sensitivity function.
-
         Parameters
         ----------
         A, B, C : torch.tensor
@@ -219,8 +210,8 @@ class TKD_Conv_2D(Tens_Conv_2D_Base):
 
     def set_factors(self, factors):
         A, B, C = factors
-        A = A.permute((1, 0)).reshape(self.shapes[0])
-        B = B.permute((2, 1, 0)).reshape(self.shapes[1])
+        A = A.permute((1,0)).reshape(self.shapes[0])
+        B = B.permute((2,1,0)).reshape(self.shapes[1])
         C = C.reshape(self.shapes[2])
 
         with torch.no_grad():

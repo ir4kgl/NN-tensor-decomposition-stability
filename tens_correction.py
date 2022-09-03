@@ -210,8 +210,8 @@ class TKD_Factorizer(Tens_Factorizer):
         return LA.cholesky(W)
 
 
-class TC_factorizer(Tens_Factorizer):
-    def __init__(self, maxiters=200):
+class TC_Factorizer(Tens_Factorizer):
+    def __init__(self, maxiters=10000):
         super().__init__()
         self.rank = None
         self.factors = None
@@ -225,8 +225,10 @@ class TC_factorizer(Tens_Factorizer):
         self.rank = rank
         self.als_decomposition(K, rank, n_iters_als)
         if correct:
-            self.delta = torch.norm(self.K - self.contract(), p=2)
+            self.delta = torch.norm(self.K - self.contract())
+            wandb.log({"error before correction": torch.norm(self.K - self.contract())})
             self.correct()
+            wandb.log({"error after correction": torch.norm(self.K - self.contract())})
         return self.factors
 
     def contract(self):
@@ -249,21 +251,22 @@ class TC_factorizer(Tens_Factorizer):
                 self.cyclic_shift()
             diff = torch.norm(self.K -self.contract()).item()
             if self.old is not None:
-                if self.old - diff < 1e-6:
+                if (self.old - diff) / self.old < 1e-5:
                     return self.factors
             self.old = diff
 
 
     def correct(self):
         init = self.ss()
+        wandb.log({"sentivity": init})
         for i in range(self.maxiters):
             for j in range(self.n_factors):
                 self.optimization_step()
                 self.cyclic_shift()
             cur_ss = self.ss()
+            wandb.log({"sentivity": cur_ss})
             if self.prev is not None:
-                print(self.prev - cur_ss)
-                if (self.prev - cur_ss) / init < 1e-5:
+                if (self.prev - cur_ss) / self.prev < 1e-5:
                     return
             self.prev = cur_ss
 
@@ -286,36 +289,42 @@ class TC_factorizer(Tens_Factorizer):
         r0, r1, r2 = self.rank
         regressor = torch.einsum('ibj,jck->bcik', B, C).reshape((-1, r0 * r1))
         target = self.K.reshape((self.K.shape[0], -1)).permute((1,0))
-        if j < 2:
-            self.factors[0] /= self.factors[0].max(dim=1)[0][:,None]
         self.factors[0] = LA.lstsq(regressor, target,)[0]
         self.factors[0] = self.factors[0].reshape((r1, r0, -1))
         self.factors[0] = self.factors[0].permute((1,2,0))
+        del regressor
+        del target
+        torch.cuda.empty_cache()
 
     def optimization_step(self):
         A, B, C = self.factors
         r0, r1, r2 = self.rank
         L = self.find_L()
-        regressor = torch.einsum('ibj,jck->ikbc', B, C).reshape((r0 * r2, -1))
+        regressor = torch.einsum('ibj,jck->ikbc', B, C).reshape((r0 * r1, -1))
         regressor = LA.solve_triangular(L, regressor, upper=False)
         target = self.K.reshape((self.K.shape[0], -1))
         A_raw = Linreg_Optimizer().solve_matrix(regressor, target, self.delta)
         self.factors[0] = LA.solve_triangular(L.T, A_raw.T, upper=True)
-        self.factors[0] = self.factors[0].reshape((r0, r2, -1))
+        self.factors[0] = self.factors[0].reshape((r1, r0, -1))
         self.factors[0] = self.factors[0].permute((1,2,0))
+        del A_raw
+        del regressor
+        del target
+        del L
+        torch.cuda.empty_cache()
 
     def find_L(self, core=False):
         A, B, C = self.factors
         r0, r1, r2 = self.rank
-        B = B.reshape((r0, -1))
-        C = C.permute((2,1,0)).reshape((r2, -1))
-        W = torch.kron(B @ B.T, torch.eye(r2).cuda()) + torch.kron(torch.eye(r0).cuda(), C @ C.T)
+        B = B.reshape((r1, -1))
+        C = C.permute((2,1,0)).reshape((r0, -1))
+        W = torch.kron(B @ B.T, torch.eye(r0).cuda()) + torch.kron(torch.eye(r1).cuda(), C @ C.T)
         return LA.cholesky(W)
 
     def ss(self):
         A, B, C = self.factors
         n1, n2, n3 = self.K.shape
         t1 = torch.einsum('abc,abd,cfe,dfe', B, B, C, C)
-        t2 = torch.einsum('abc,abd,cfe,dfe', A, A, C, C)
+        t2 = torch.einsum('abc,abd,cfe,dfe', C, C, A, A)
         t3 = torch.einsum('abc,abd,cfe,dfe', A, A, B, B)
         return t1 * n1 + t2 * n2 + t3 * n3
